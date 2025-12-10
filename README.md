@@ -9,9 +9,9 @@
   npm start
 
   Your team members can now clone it:
-  git clone https://github.com/comeonman77/hackrift2025-Clubit.git
-  cd hackrift2025-Clubit
-  npm install
-  cp .env.example .env
-  # Add Supabase credentials to .env
-  npm start
+  1. git clone https://github.com/comeonman77/hackrift2025-Clubit.git
+  2. cd hackrift2025-Clubit
+  3. npm install
+  4. cp .env.example .env
+  5. Add Supabase credentials to .env
+  6. npm start
