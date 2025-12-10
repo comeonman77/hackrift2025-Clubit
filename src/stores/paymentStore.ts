@@ -164,7 +164,7 @@ export const usePaymentStore = create<PaymentState>((set, get) => ({
       .from('payment_records')
       .select(`
         *,
-        user:profiles(*)
+        user:profiles!payment_records_user_id_fkey(*)
       `)
       .eq('request_id', paymentId)
       .order('status', { ascending: true });

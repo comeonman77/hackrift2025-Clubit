@@ -149,6 +149,54 @@ ALTER TABLE public.announcements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 
 -- =============================================
+-- SECURITY DEFINER FUNCTIONS (for avoiding RLS recursion)
+-- =============================================
+
+-- Function to check if user is a club member (bypasses RLS)
+CREATE OR REPLACE FUNCTION is_club_member(club_uuid UUID, user_uuid UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM memberships
+    WHERE club_id = club_uuid
+    AND user_id = user_uuid
+  );
+$$;
+
+-- Function to check if user is a club admin (bypasses RLS)
+CREATE OR REPLACE FUNCTION is_club_admin(club_uuid UUID, user_uuid UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM memberships
+    WHERE club_id = club_uuid
+    AND user_id = user_uuid
+    AND role = 'admin'
+  );
+$$;
+
+-- Function to check if user is admin or committee (bypasses RLS)
+CREATE OR REPLACE FUNCTION is_club_admin_or_committee(club_uuid UUID, user_uuid UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM memberships
+    WHERE club_id = club_uuid
+    AND user_id = user_uuid
+    AND role IN ('admin', 'committee')
+  );
+$$;
+
+-- =============================================
 -- RLS POLICIES
 -- =============================================
 
@@ -164,13 +212,7 @@ CREATE POLICY "Users can insert own profile" ON public.profiles
 
 -- Clubs policies
 CREATE POLICY "Anyone can view clubs they are a member of" ON public.clubs
-  FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM public.memberships
-      WHERE memberships.club_id = clubs.id
-      AND memberships.user_id = auth.uid()
-    )
-  );
+  FOR SELECT USING (is_club_member(id, auth.uid()));
 
 CREATE POLICY "Anyone can view clubs by invite code" ON public.clubs
   FOR SELECT USING (TRUE);
@@ -179,119 +221,62 @@ CREATE POLICY "Authenticated users can create clubs" ON public.clubs
   FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
 
 CREATE POLICY "Admins can update their clubs" ON public.clubs
-  FOR UPDATE USING (
-    EXISTS (
-      SELECT 1 FROM public.memberships
-      WHERE memberships.club_id = clubs.id
-      AND memberships.user_id = auth.uid()
-      AND memberships.role = 'admin'
-    )
-  );
+  FOR UPDATE USING (is_club_admin(id, auth.uid()));
 
 CREATE POLICY "Admins can delete their clubs" ON public.clubs
-  FOR DELETE USING (
-    EXISTS (
-      SELECT 1 FROM public.memberships
-      WHERE memberships.club_id = clubs.id
-      AND memberships.user_id = auth.uid()
-      AND memberships.role = 'admin'
-    )
-  );
+  FOR DELETE USING (is_club_admin(id, auth.uid()));
 
--- Memberships policies
+-- Memberships policies (using SECURITY DEFINER functions to avoid recursion)
+CREATE POLICY "Users can view their own memberships" ON public.memberships
+  FOR SELECT USING (auth.uid() = user_id);
+
 CREATE POLICY "Members can view club memberships" ON public.memberships
-  FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM public.memberships AS m
-      WHERE m.club_id = memberships.club_id
-      AND m.user_id = auth.uid()
-    )
-  );
+  FOR SELECT USING (is_club_member(club_id, auth.uid()));
 
 CREATE POLICY "Users can join clubs" ON public.memberships
   FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 CREATE POLICY "Admins can update memberships" ON public.memberships
-  FOR UPDATE USING (
-    EXISTS (
-      SELECT 1 FROM public.memberships AS m
-      WHERE m.club_id = memberships.club_id
-      AND m.user_id = auth.uid()
-      AND m.role = 'admin'
-    )
-  );
+  FOR UPDATE USING (is_club_admin(club_id, auth.uid()));
 
 CREATE POLICY "Members can leave clubs or admins can remove members" ON public.memberships
   FOR DELETE USING (
-    auth.uid() = user_id OR
-    EXISTS (
-      SELECT 1 FROM public.memberships AS m
-      WHERE m.club_id = memberships.club_id
-      AND m.user_id = auth.uid()
-      AND m.role = 'admin'
-    )
+    auth.uid() = user_id OR is_club_admin(club_id, auth.uid())
   );
 
 -- Events policies
 CREATE POLICY "Members can view club events" ON public.events
-  FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM public.memberships
-      WHERE memberships.club_id = events.club_id
-      AND memberships.user_id = auth.uid()
-    )
-  );
+  FOR SELECT USING (is_club_member(club_id, auth.uid()));
 
 CREATE POLICY "Admins and committee can create events" ON public.events
-  FOR INSERT WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.memberships
-      WHERE memberships.club_id = events.club_id
-      AND memberships.user_id = auth.uid()
-      AND memberships.role IN ('admin', 'committee')
-    )
-  );
+  FOR INSERT WITH CHECK (is_club_admin_or_committee(club_id, auth.uid()));
 
 CREATE POLICY "Admins and committee can update events" ON public.events
-  FOR UPDATE USING (
-    EXISTS (
-      SELECT 1 FROM public.memberships
-      WHERE memberships.club_id = events.club_id
-      AND memberships.user_id = auth.uid()
-      AND memberships.role IN ('admin', 'committee')
-    )
-  );
+  FOR UPDATE USING (is_club_admin_or_committee(club_id, auth.uid()));
 
 CREATE POLICY "Admins and committee can delete events" ON public.events
-  FOR DELETE USING (
-    EXISTS (
-      SELECT 1 FROM public.memberships
-      WHERE memberships.club_id = events.club_id
-      AND memberships.user_id = auth.uid()
-      AND memberships.role IN ('admin', 'committee')
-    )
-  );
+  FOR DELETE USING (is_club_admin_or_committee(club_id, auth.uid()));
 
--- RSVPs policies
-CREATE POLICY "Members can view RSVPs for their club events" ON public.rsvps
-  FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM public.events
-      JOIN public.memberships ON memberships.club_id = events.club_id
-      WHERE events.id = rsvps.event_id
-      AND memberships.user_id = auth.uid()
-    )
+-- RSVPs policies (need helper function for event club membership check)
+CREATE OR REPLACE FUNCTION is_event_member(event_uuid UUID, user_uuid UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM events e
+    WHERE e.id = event_uuid
+    AND is_club_member(e.club_id, user_uuid)
   );
+$$;
+
+CREATE POLICY "Members can view RSVPs for their club events" ON public.rsvps
+  FOR SELECT USING (is_event_member(event_id, auth.uid()));
 
 CREATE POLICY "Members can create their own RSVPs" ON public.rsvps
   FOR INSERT WITH CHECK (
-    auth.uid() = user_id AND
-    EXISTS (
-      SELECT 1 FROM public.events
-      JOIN public.memberships ON memberships.club_id = events.club_id
-      WHERE events.id = rsvps.event_id
-      AND memberships.user_id = auth.uid()
-    )
+    auth.uid() = user_id AND is_event_member(event_id, auth.uid())
   );
 
 CREATE POLICY "Members can update their own RSVPs" ON public.rsvps
@@ -302,118 +287,54 @@ CREATE POLICY "Members can delete their own RSVPs" ON public.rsvps
 
 -- Payment requests policies
 CREATE POLICY "Members can view club payment requests" ON public.payment_requests
-  FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM public.memberships
-      WHERE memberships.club_id = payment_requests.club_id
-      AND memberships.user_id = auth.uid()
-    )
-  );
+  FOR SELECT USING (is_club_member(club_id, auth.uid()));
 
 CREATE POLICY "Admins can create payment requests" ON public.payment_requests
-  FOR INSERT WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.memberships
-      WHERE memberships.club_id = payment_requests.club_id
-      AND memberships.user_id = auth.uid()
-      AND memberships.role = 'admin'
-    )
-  );
+  FOR INSERT WITH CHECK (is_club_admin(club_id, auth.uid()));
 
 CREATE POLICY "Admins can update payment requests" ON public.payment_requests
-  FOR UPDATE USING (
-    EXISTS (
-      SELECT 1 FROM public.memberships
-      WHERE memberships.club_id = payment_requests.club_id
-      AND memberships.user_id = auth.uid()
-      AND memberships.role = 'admin'
-    )
-  );
+  FOR UPDATE USING (is_club_admin(club_id, auth.uid()));
 
 CREATE POLICY "Admins can delete payment requests" ON public.payment_requests
-  FOR DELETE USING (
-    EXISTS (
-      SELECT 1 FROM public.memberships
-      WHERE memberships.club_id = payment_requests.club_id
-      AND memberships.user_id = auth.uid()
-      AND memberships.role = 'admin'
-    )
-  );
+  FOR DELETE USING (is_club_admin(club_id, auth.uid()));
 
--- Payment records policies
+-- Payment records policies (need helper function)
+CREATE OR REPLACE FUNCTION is_payment_request_admin(request_uuid UUID, user_uuid UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM payment_requests pr
+    WHERE pr.id = request_uuid
+    AND is_club_admin(pr.club_id, user_uuid)
+  );
+$$;
+
 CREATE POLICY "Members can view their own payment records or admins can view all" ON public.payment_records
   FOR SELECT USING (
-    auth.uid() = user_id OR
-    EXISTS (
-      SELECT 1 FROM public.payment_requests
-      JOIN public.memberships ON memberships.club_id = payment_requests.club_id
-      WHERE payment_requests.id = payment_records.request_id
-      AND memberships.user_id = auth.uid()
-      AND memberships.role = 'admin'
-    )
+    auth.uid() = user_id OR is_payment_request_admin(request_id, auth.uid())
   );
 
 CREATE POLICY "Admins can create payment records" ON public.payment_records
-  FOR INSERT WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.payment_requests
-      JOIN public.memberships ON memberships.club_id = payment_requests.club_id
-      WHERE payment_requests.id = payment_records.request_id
-      AND memberships.user_id = auth.uid()
-      AND memberships.role = 'admin'
-    )
-  );
+  FOR INSERT WITH CHECK (is_payment_request_admin(request_id, auth.uid()));
 
 CREATE POLICY "Admins can update payment records" ON public.payment_records
-  FOR UPDATE USING (
-    EXISTS (
-      SELECT 1 FROM public.payment_requests
-      JOIN public.memberships ON memberships.club_id = payment_requests.club_id
-      WHERE payment_requests.id = payment_records.request_id
-      AND memberships.user_id = auth.uid()
-      AND memberships.role = 'admin'
-    )
-  );
+  FOR UPDATE USING (is_payment_request_admin(request_id, auth.uid()));
 
 -- Announcements policies
 CREATE POLICY "Members can view club announcements" ON public.announcements
-  FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM public.memberships
-      WHERE memberships.club_id = announcements.club_id
-      AND memberships.user_id = auth.uid()
-    )
-  );
+  FOR SELECT USING (is_club_member(club_id, auth.uid()));
 
 CREATE POLICY "Admins and committee can create announcements" ON public.announcements
-  FOR INSERT WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.memberships
-      WHERE memberships.club_id = announcements.club_id
-      AND memberships.user_id = auth.uid()
-      AND memberships.role IN ('admin', 'committee')
-    )
-  );
+  FOR INSERT WITH CHECK (is_club_admin_or_committee(club_id, auth.uid()));
 
 CREATE POLICY "Admins and committee can update announcements" ON public.announcements
-  FOR UPDATE USING (
-    EXISTS (
-      SELECT 1 FROM public.memberships
-      WHERE memberships.club_id = announcements.club_id
-      AND memberships.user_id = auth.uid()
-      AND memberships.role IN ('admin', 'committee')
-    )
-  );
+  FOR UPDATE USING (is_club_admin_or_committee(club_id, auth.uid()));
 
 CREATE POLICY "Admins and committee can delete announcements" ON public.announcements
-  FOR DELETE USING (
-    EXISTS (
-      SELECT 1 FROM public.memberships
-      WHERE memberships.club_id = announcements.club_id
-      AND memberships.user_id = auth.uid()
-      AND memberships.role IN ('admin', 'committee')
-    )
-  );
+  FOR DELETE USING (is_club_admin_or_committee(club_id, auth.uid()));
 
 -- Notifications policies
 CREATE POLICY "Users can view their own notifications" ON public.notifications
