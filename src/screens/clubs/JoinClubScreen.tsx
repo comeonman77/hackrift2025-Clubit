@@ -103,14 +103,15 @@ export const JoinClubScreen: React.FC = () => {
         <View style={styles.form}>
           <Input
             label="Invite Code"
-            placeholder="Enter invite code (e.g., ABC12345)"
+            placeholder="Enter invite code"
             value={inviteCode}
             onChangeText={(text) => {
-              setInviteCode(text.toUpperCase());
+              setInviteCode(text);
               setFoundClub(null);
               setError('');
             }}
-            autoCapitalize="characters"
+            autoCapitalize="none"
+            autoCorrect={false}
             error={error}
           />
 

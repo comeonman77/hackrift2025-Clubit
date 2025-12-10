@@ -91,7 +91,7 @@ export const useClubStore = create<ClubState>((set, get) => ({
     const { data, error } = await supabase
       .from('clubs')
       .select('*')
-      .eq('invite_code', inviteCode.toUpperCase())
+      .eq('invite_code', inviteCode.toLowerCase().trim())
       .single();
 
     if (error) return null;
