@@ -231,7 +231,7 @@ export const ClubDetailsScreen: React.FC = () => {
       <View style={styles.section}>
         <Button
           title="View Members"
-          onPress={() => navigation.navigate('Members' as any)}
+          onPress={() => navigation.navigate('Main', { screen: 'Members' } as any)}
           variant="outline"
           fullWidth
           style={styles.memberButton}
@@ -243,14 +243,6 @@ export const ClubDetailsScreen: React.FC = () => {
             variant="outline"
             fullWidth
             style={styles.memberButton}
-          />
-        )}
-        {isAdmin && (
-          <Button
-            title="Edit Club"
-            onPress={() => navigation.navigate('EditClub', { clubId })}
-            variant="ghost"
-            fullWidth
           />
         )}
         {!isAdmin && (
