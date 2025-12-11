@@ -1,17 +1,10 @@
   To Run the App
-
-  1. Create a Supabase project and run database/schema.sql
-  2. Copy .env.example to .env and add your Supabase credentials:
-  EXPO_PUBLIC_SUPABASE_URL=your_url
-  EXPO_PUBLIC_SUPABASE_ANON_KEY=your_key
-  3. Start the app:
-  cd club-management-app
-  npm start
-
-  Your team members can now clone it:
   1. git clone https://github.com/comeonman77/hackrift2025-Clubit.git
-  2. cd hackrift2025-Clubit
-  3. npm install
-  4. cp .env.example .env
-  5. Add Supabase credentials to .env
-  6. npm start
+  2. Open commnad line (cmd)
+  3. Run "cd hackrift2025-Clubit" to go to the folder
+  4. Run "npm install" to import or update all the necessary packages
+  5. Run "cp .env.example .env" to create .env file
+  6. Run "npx expo start --tunnel" to run expo application
+  7. Download "Expo Go" app on your phone
+  8. Scan the QR code generated in the command line console with camera on your phone (should be directed to the "Expo Go" app)
+  9. Run the app on "Expo Go" app
